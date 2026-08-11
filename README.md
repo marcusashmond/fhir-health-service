@@ -48,8 +48,9 @@ The Kafka publish happens after the Postgres write succeeds and is best-effort: 
 - Real-time anomaly-detection consumer for out-of-range vital signs — currently covers systolic blood pressure (LOINC `8480-6`, normal range 90–140), structured as a lookup table so more LOINC codes are a one-line addition
 - Graceful shutdown on `SIGINT`/`SIGTERM` — HTTP server and Kafka consumer both drain cleanly
 - Health check endpoint (`GET /health`)
+- HIPAA-aligned audit logging middleware on all `/Patient` and `/Observation` routes — logs timestamp, method, path, resource ID, and status code as JSON to stdout and asynchronously to the `audit_logs` table (a full queue or DB hiccup drops the persisted record rather than blocking the request). Inspectable via `GET /audit-logs?limit=&offset=`
 
-Not yet implemented: authentication/authorization, audit logging.
+Not yet implemented: authentication/authorization.
 
 ## Getting Started
 
@@ -71,6 +72,7 @@ docker compose up -d
 # apply migrations (no migration runner yet — applied directly via psql)
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0001_create_patients_table.sql
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0002_create_observations_table.sql
+docker compose exec -T postgres psql -U fhir -d fhir < migrations/0003_create_audit_logs_table.sql
 
 go run main.go
 ```
@@ -106,14 +108,34 @@ The consumer picks this up off `observation.created` and logs:
 ALERT: abnormal observation for patient Patient/a1b2c3d4e5f6a7b8: value 150 outside normal range [90, 140] (code 8480-6)
 ```
 
+### Example: inspect the audit trail
+
+```bash
+curl "http://localhost:8080/audit-logs?limit=10"
+```
+
+Returns the most recent accesses to `/Patient` and `/Observation`, newest first:
+
+```json
+{
+  "entries": [
+    {"id": 3, "timestamp": "2026-08-11T18:21:30.335Z", "method": "POST", "path": "/Observation", "resourceType": "Observation", "statusCode": 201},
+    {"id": 2, "timestamp": "2026-08-11T18:21:30.298Z", "method": "GET", "path": "/Patient/a1b2c3d4e5f6a7b8", "resourceType": "Patient", "resourceId": "a1b2c3d4e5f6a7b8", "statusCode": 200}
+  ],
+  "limit": 10,
+  "offset": 0
+}
+```
+
 ## Project Structure
 
 ```text
 internal/
-  handlers/    HTTP handlers (chi) for Patient and Observation endpoints
+  handlers/    HTTP handlers (chi) for Patient, Observation, and audit-log endpoints
   models/      FHIR resource structs — Patient, Observation, and supporting types (HumanName, Address, CodeableConcept, ...)
-  repository/  Postgres-backed persistence behind PatientRepository / ObservationRepository interfaces
+  repository/  Postgres-backed persistence behind PatientRepository / ObservationRepository / AuditLogRepository interfaces
   kafka/       Kafka producer (publishes observation.created) and consumer (anomaly detection)
+  middleware/  Audit-logging middleware for Patient/Observation routes
 migrations/    Raw SQL migration files, applied manually against Postgres
 k8s/           Kubernetes manifests (Deployment, Service, Secret) for deploying the app — see k8s/README.md
 Dockerfile     Multi-stage build producing a minimal distroless runtime image
