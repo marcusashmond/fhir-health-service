@@ -49,7 +49,7 @@ The Kafka publish happens after the Postgres write succeeds and is best-effort: 
 - Graceful shutdown on `SIGINT`/`SIGTERM` — HTTP server and Kafka consumer both drain cleanly
 - Health check endpoint (`GET /health`)
 
-Not yet implemented: authentication/authorization, audit logging, containerized deployment (no Dockerfile/Kubernetes manifests for the app itself — Docker Compose currently covers only its Postgres/Kafka dependencies).
+Not yet implemented: authentication/authorization, audit logging.
 
 ## Getting Started
 
@@ -115,7 +115,23 @@ internal/
   repository/  Postgres-backed persistence behind PatientRepository / ObservationRepository interfaces
   kafka/       Kafka producer (publishes observation.created) and consumer (anomaly detection)
 migrations/    Raw SQL migration files, applied manually against Postgres
+k8s/           Kubernetes manifests (Deployment, Service, Secret) for deploying the app — see k8s/README.md
+Dockerfile     Multi-stage build producing a minimal distroless runtime image
 ```
+
+## Deployment
+
+The app has a multi-stage `Dockerfile` (Go build stage → `distroless/static` runtime, no shell, non-root) and basic Kubernetes manifests under [`k8s/`](k8s/README.md).
+
+```bash
+docker build -t fhir-health-service:latest .
+docker run -p 8080:8080 \
+  -e DATABASE_URL='postgres://fhir:fhir@host.docker.internal:5432/fhir?sslmode=disable' \
+  -e KAFKA_BROKER='host.docker.internal:9092' \
+  fhir-health-service:latest
+```
+
+`host.docker.internal` lets a standalone container reach the Postgres/Kafka started by `docker compose` on the host — useful for testing the image locally. In Kubernetes, `DATABASE_URL`/`KAFKA_BROKER` are supplied via `k8s/secret.yaml` and should point at managed or in-cluster instances (RDS/MSK, or a Postgres/Kafka Helm chart) rather than `docker-compose.yml`'s containers, which are dev-only. See [`k8s/README.md`](k8s/README.md) for details.
 
 ## Roadmap
 
@@ -124,4 +140,4 @@ Not committed to, but the natural next steps given the current structure:
 - Additional LOINC code ranges in the anomaly consumer (heart rate, temperature, etc.)
 - A migration runner instead of applying SQL files by hand
 - Authentication/authorization
-- Containerized deployment for the app itself (Dockerfile, Kubernetes manifests)
+- In-cluster or managed Postgres/Kafka for the Kubernetes deployment (currently BYO per `k8s/README.md`)
