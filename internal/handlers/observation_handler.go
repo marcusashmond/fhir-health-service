@@ -3,11 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/marcusashmond/fhir-health-service/internal/kafka"
 	"github.com/marcusashmond/fhir-health-service/internal/models"
 	"github.com/marcusashmond/fhir-health-service/internal/repository"
 )
@@ -15,10 +17,11 @@ import (
 type ObservationHandler struct {
 	repo        repository.ObservationRepository
 	patientRepo repository.PatientRepository
+	producer    *kafka.Producer
 }
 
-func NewObservationHandler(repo repository.ObservationRepository, patientRepo repository.PatientRepository) *ObservationHandler {
-	return &ObservationHandler{repo: repo, patientRepo: patientRepo}
+func NewObservationHandler(repo repository.ObservationRepository, patientRepo repository.PatientRepository, producer *kafka.Producer) *ObservationHandler {
+	return &ObservationHandler{repo: repo, patientRepo: patientRepo, producer: producer}
 }
 
 func (h *ObservationHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +39,10 @@ func (h *ObservationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create observation")
 		return
+	}
+
+	if err := h.producer.PublishObservationCreated(r.Context(), created); err != nil {
+		log.Printf("failed to publish observation.created event for %s: %v", created.ID, err)
 	}
 
 	writeJSON(w, http.StatusCreated, created)

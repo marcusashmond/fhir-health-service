@@ -3,19 +3,28 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
 	"github.com/marcusashmond/fhir-health-service/internal/handlers"
+	"github.com/marcusashmond/fhir-health-service/internal/kafka"
 	"github.com/marcusashmond/fhir-health-service/internal/repository"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		log.Printf("warning: failed to load .env file: %v", err)
 	}
@@ -25,11 +34,29 @@ func main() {
 		log.Fatal("DATABASE_URL environment variable is required")
 	}
 
+	kafkaBroker := os.Getenv("KAFKA_BROKER")
+	if kafkaBroker == "" {
+		log.Fatal("KAFKA_BROKER environment variable is required")
+	}
+
 	pool, err := pgxpool.New(context.Background(), dbURL)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 	defer pool.Close()
+
+	producer := kafka.NewProducer(kafkaBroker)
+	defer producer.Close()
+
+	consumer := kafka.NewConsumer(kafkaBroker)
+	defer consumer.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		consumer.Run(ctx)
+	}()
 
 	r := chi.NewRouter()
 
@@ -39,7 +66,7 @@ func main() {
 	observationRepo := repository.NewPostgresObservationRepository(pool)
 
 	patientHandler := handlers.NewPatientHandler(patientRepo)
-	observationHandler := handlers.NewObservationHandler(observationRepo, patientRepo)
+	observationHandler := handlers.NewObservationHandler(observationRepo, patientRepo, producer)
 
 	r.Route("/Patient", func(r chi.Router) {
 		r.Post("/", patientHandler.Create)
@@ -57,10 +84,25 @@ func main() {
 		r.Delete("/{id}", observationHandler.Delete)
 	})
 
-	log.Println("starting server on :8080")
-	if err := http.ListenAndServe(":8080", r); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{Addr: ":8080", Handler: r}
+
+	go func() {
+		log.Println("starting server on :8080")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("shutting down...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server shutdown error: %v", err)
 	}
+
+	wg.Wait()
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
