@@ -18,6 +18,7 @@ import (
 
 	"github.com/marcusashmond/fhir-health-service/internal/handlers"
 	"github.com/marcusashmond/fhir-health-service/internal/kafka"
+	"github.com/marcusashmond/fhir-health-service/internal/middleware"
 	"github.com/marcusashmond/fhir-health-service/internal/repository"
 )
 
@@ -64,11 +65,19 @@ func main() {
 
 	patientRepo := repository.NewPostgresPatientRepository(pool)
 	observationRepo := repository.NewPostgresObservationRepository(pool)
+	auditLogRepo := repository.NewPostgresAuditLogRepository(pool)
 
 	patientHandler := handlers.NewPatientHandler(patientRepo)
 	observationHandler := handlers.NewObservationHandler(observationRepo, patientRepo, producer)
+	auditLogHandler := handlers.NewAuditLogHandler(auditLogRepo)
+
+	auditLogger := middleware.NewAuditLogger(auditLogRepo)
+	defer auditLogger.Close()
+
+	r.Get("/audit-logs", auditLogHandler.List)
 
 	r.Route("/Patient", func(r chi.Router) {
+		r.Use(auditLogger.Middleware)
 		r.Post("/", patientHandler.Create)
 		r.Get("/", patientHandler.List)
 		r.Get("/{id}", patientHandler.GetByID)
@@ -78,6 +87,7 @@ func main() {
 	})
 
 	r.Route("/Observation", func(r chi.Router) {
+		r.Use(auditLogger.Middleware)
 		r.Post("/", observationHandler.Create)
 		r.Get("/{id}", observationHandler.GetByID)
 		r.Put("/{id}", observationHandler.Update)
