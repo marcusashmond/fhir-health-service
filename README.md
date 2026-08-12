@@ -1,5 +1,7 @@
 # fhir-health-service
 
+[![CI](https://github.com/marcusashmond/fhir-health-service/actions/workflows/ci.yml/badge.svg)](https://github.com/marcusashmond/fhir-health-service/actions/workflows/ci.yml)
+
 A FHIR-compliant health data interoperability service in Go, with Kafka-based event streaming and real-time anomaly detection.
 
 ## Overview
