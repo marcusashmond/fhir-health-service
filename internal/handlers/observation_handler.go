@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -9,18 +10,23 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/marcusashmond/fhir-health-service/internal/kafka"
 	"github.com/marcusashmond/fhir-health-service/internal/models"
 	"github.com/marcusashmond/fhir-health-service/internal/repository"
 )
 
+// EventPublisher is satisfied by *kafka.Producer; it exists so the observation
+// creation path can be tested without a live Kafka broker.
+type EventPublisher interface {
+	PublishObservationCreated(ctx context.Context, observation *models.Observation) error
+}
+
 type ObservationHandler struct {
 	repo        repository.ObservationRepository
 	patientRepo repository.PatientRepository
-	producer    *kafka.Producer
+	producer    EventPublisher
 }
 
-func NewObservationHandler(repo repository.ObservationRepository, patientRepo repository.PatientRepository, producer *kafka.Producer) *ObservationHandler {
+func NewObservationHandler(repo repository.ObservationRepository, patientRepo repository.PatientRepository, producer EventPublisher) *ObservationHandler {
 	return &ObservationHandler{repo: repo, patientRepo: patientRepo, producer: producer}
 }
 
