@@ -2,7 +2,7 @@
 
 This is a sample System Security Plan written for a personal project. The FHIR Health Service has not been assessed or formally authorized, and no authorizing official has reviewed this plan. The system has never processed real patient data.
 
-* Version: 1.0
+* Version: 1.1
 * Date: November 7, 2026
 * Prepared by: Marcus Ashmond
 * Control baseline: NIST SP 800-53 Revision 5, Moderate baseline as defined in NIST SP 800-53B
@@ -172,20 +172,20 @@ This plan covers the AC, AU, IA, SC, SI, CM, CP, RA, and SA families. Within tho
 | SC-28(1) | Cryptographic Protection | Inherited |
 | SC-39 | Process Isolation | Inherited |
 | SI-2 | Flaw Remediation | Partially Implemented |
-| SI-2(2) | Automated Flaw Remediation Status | Planned |
+| SI-2(2) | Automated Flaw Remediation Status | Partially Implemented |
 | SI-3 | Malicious Code Protection | Planned |
 | SI-4 | System Monitoring | Planned |
-| SI-5 | Security Alerts, Advisories, and Directives | Planned |
+| SI-5 | Security Alerts, Advisories, and Directives | Partially Implemented |
 | SI-7 | Software, Firmware, and Information Integrity | Partially Implemented |
 | SI-10 | Information Input Validation | Partially Implemented |
 | SI-11 | Error Handling | Implemented |
 | SI-12 | Information Management and Retention | Planned |
 | CM-2 | Baseline Configuration | Partially Implemented |
 | CM-3 | Configuration Change Control | Partially Implemented |
-| CM-4 | Impact Analyses | Planned |
-| CM-5 | Access Restrictions for Change | Planned |
+| CM-4 | Impact Analyses | Partially Implemented |
+| CM-5 | Access Restrictions for Change | Partially Implemented |
 | CM-6 | Configuration Settings | Partially Implemented |
-| CM-7 | Least Functionality | Partially Implemented |
+| CM-7 | Least Functionality | Implemented |
 | CM-8 | System Component Inventory | Partially Implemented |
 | CP-2 | Contingency Plan | Planned |
 | CP-4 | Contingency Plan Testing | Planned |
@@ -197,7 +197,7 @@ This plan covers the AC, AU, IA, SC, SI, CM, CP, RA, and SA families. Within tho
 | RA-3 | Risk Assessment | Planned |
 | RA-5 | Vulnerability Monitoring and Scanning | Partially Implemented |
 | RA-5(2) | Update Vulnerabilities to Be Scanned | Implemented |
-| RA-5(11) | Public Disclosure Program | Planned |
+| RA-5(11) | Public Disclosure Program | Partially Implemented |
 | RA-7 | Risk Response | Partially Implemented |
 | SA-3 | System Development Life Cycle | Partially Implemented |
 | SA-5 | System Documentation | Partially Implemented |
@@ -207,7 +207,7 @@ This plan covers the AC, AU, IA, SC, SI, CM, CP, RA, and SA families. Within tho
 | SA-11 | Developer Testing and Evaluation | Partially Implemented |
 | SA-22 | Unsupported System Components | Partially Implemented |
 
-Totals: 4 Implemented, 29 Partially Implemented, 34 Planned, 9 Inherited.
+Totals: 5 Implemented, 33 Partially Implemented, 29 Planned, 9 Inherited.
 
 ### 4.3 Access Control (AC)
 
@@ -237,7 +237,9 @@ Status: Partially Implemented
 
 The container runs with minimal privilege. The [Dockerfile](../../Dockerfile) uses `distroless/static-debian12:nonroot` and sets `USER nonroot:nonroot`. [k8s/deployment.yaml](../../k8s/deployment.yaml) sets `runAsNonRoot: true`, `runAsUser: 65532`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, drops all Linux capabilities, and applies the `RuntimeDefault` seccomp profile.
 
-Gaps: The application connects to PostgreSQL with one role for every table and every operation, so a flaw in any handler has write access to the audit table. The producer is allowed to create topics (`AllowAutoTopicCreation: true` in [producer.go](../../internal/kafka/producer.go)). The pod mounts the default service account token even though it never calls the Kubernetes API. There are no API roles at all (see AC-2). Tracked as POAM-13.
+The pod sets `automountServiceAccountToken: false`, because the application never calls the Kubernetes API. The producer sets `AllowAutoTopicCreation: false` in [producer.go](../../internal/kafka/producer.go), so the application cannot create Kafka topics.
+
+Gaps: The application connects to PostgreSQL with one role for every table and every operation, so a flaw in any handler has write access to the audit table. There are no API roles at all (see AC-2). Tracked as POAM-13.
 
 #### AC-6(9) Log Use of Privileged Functions
 
@@ -341,7 +343,7 @@ Status: Partially Implemented
 
 Status: Implemented
 
-The middleware stamps each record with `time.Now().UTC()`, and the `audit_logs.timestamp` column is `TIMESTAMPTZ`, which stores microsecond precision. `TestAuditLogger_Middleware_RecordsRequest` checks that the timestamp is in UTC. Clock synchronization on the EKS worker nodes comes from the Amazon Time Sync Service.
+The middleware stamps each record with `time.Now().UTC()`, and the `audit_logs.timestamp` column is `TIMESTAMPTZ`, which stores microsecond precision. PostgreSQL returns `TIMESTAMPTZ` values in the session time zone, so `List` in [postgres_audit_log_repository.go](../../internal/repository/postgres_audit_log_repository.go) converts each timestamp back to UTC before `/audit-logs` returns it. `TestAuditLogger_Middleware_RecordsRequest` checks that records are created in UTC. `TestPostgresAuditLogRepository_InsertAndList` sets the database time zone to America/New_York and checks that returned timestamps are still UTC. Clock synchronization on the EKS worker nodes comes from the Amazon Time Sync Service.
 
 #### AU-9 Protection of Audit Information
 
@@ -499,15 +501,17 @@ Each pod runs in its own Linux namespaces under the containerd runtime on EKS wo
 
 Status: Partially Implemented
 
-[.github/workflows/ci.yml](../../.github/workflows/ci.yml) runs `govulncheck` version 1.9.0 on every push and pull request to `main`, and the job fails if a known vulnerability is reachable from the code. When that step was added, it found 14 reachable vulnerabilities in the Go standard library, `klauspost/compress`, and `golang.org/x/text`. They were fixed by moving to Go 1.26.10 and updating both modules, and the scan is now clean.
+[.github/workflows/ci.yml](../../.github/workflows/ci.yml) runs `govulncheck` version 1.9.0 on every push and pull request to `main`, and the job fails if a known vulnerability is reachable from the code. [.github/workflows/govulncheck.yml](../../.github/workflows/govulncheck.yml) runs the same scan every Monday, so a new advisory against unchanged code is caught within a week. [SECURITY.md](../../SECURITY.md) sets fix targets of 15 days for critical, 30 for high, 90 for moderate, and 180 for low findings. When that step was added, it found 14 reachable vulnerabilities in the Go standard library, `klauspost/compress`, and `golang.org/x/text`. They were fixed by moving to Go 1.26.10 and updating both modules, and the scan is now clean.
 
-Gaps: Scans run only when code changes, so a new advisory against an unchanged release goes unnoticed. The container base images are not scanned. No remediation time frame is defined. Tracked as POAM-15.
+Gap: The built container image is not scanned, so a flaw in the base image layers would not be found. Tracked as POAM-15.
 
 #### SI-2(2) Automated Flaw Remediation Status
 
-Status: Planned
+Status: Partially Implemented
 
-Nothing reports the flaw status of deployed images. The plan adds a weekly scheduled `govulncheck` run and Dependabot for Go modules and GitHub Actions. Amazon Inspector will scan images in ECR. Tracked as POAM-15.
+Two automated mechanisms check for missing updates every week. The scheduled `govulncheck` workflow checks the Go code and modules against the Go vulnerability database. [.github/dependabot.yml](../../.github/dependabot.yml) checks Go modules, GitHub Actions, and the Dockerfile base images, and opens a pull request when a newer version exists.
+
+Gaps: Nothing reports the flaw status of the image actually running in the cluster. Dependabot alerts for known vulnerabilities, as distinct from version updates, are a repository setting that must be turned on. Tracked as POAM-15.
 
 #### SI-3 Malicious Code Protection
 
@@ -523,9 +527,11 @@ The system is not monitored for attacks or unauthorized use. The anomaly consume
 
 #### SI-5 Security Alerts, Advisories, and Directives
 
-Status: Planned
+Status: Partially Implemented
 
-No one is subscribed to security advisories for the components this system uses. The plan is to turn on GitHub security advisories and Dependabot alerts for the repository and to subscribe to the Go, PostgreSQL, and AWS security bulletins. Tracked as POAM-15.
+Go advisories reach the project automatically through the weekly `govulncheck` run, which reads the Go vulnerability database. Dependabot is configured to raise version updates for Go modules, Actions, and base images.
+
+Gaps: Dependabot alerts, which deliver GitHub security advisories for the repository's dependencies, are not yet turned on in the repository settings. No one is subscribed to the PostgreSQL or AWS security bulletins. Tracked as POAM-15.
 
 #### SI-7 Software, Firmware, and Information Integrity
 
@@ -533,7 +539,9 @@ Status: Partially Implemented
 
 Go module downloads are checked against `go.sum` and the public Go checksum database, so a changed dependency fails the build. The runtime image contains only the static binary.
 
-Gaps: The base images (`golang:1.26-alpine` and `distroless/static-debian12:nonroot`) are pulled by tag, not digest. The Deployment uses the mutable tag `fhir-health-service:latest`. Images are not signed, and GitHub Actions are pinned by version tag rather than commit SHA. Tracked as POAM-16.
+Both base images in the [Dockerfile](../../Dockerfile) are pinned by digest (`golang:1.26.10-alpine@sha256:...` and `distroless/static-debian12:nonroot@sha256:...`), so a changed upstream image cannot enter the build. Every GitHub Action in both workflows is pinned to a full commit SHA with the version in a comment. Dependabot proposes digest and SHA updates as reviewed pull requests.
+
+Gaps: The Deployment uses the mutable tag `fhir-health-service:latest`. Images are not signed, so the cluster cannot check that it runs what CI built. Tracked as POAM-16.
 
 #### SI-10 Information Input Validation
 
@@ -567,27 +575,31 @@ No retention or disposal rule exists for PHI. Deletes through the API are perman
 
 Status: Partially Implemented
 
-The baseline is kept in git. It consists of the [Dockerfile](../../Dockerfile), the manifests in [k8s/](../../k8s/), the SQL in [migrations/](../../migrations/), and the dependency versions in `go.mod` and `go.sum`. The Go version is fixed at 1.26.10 in `go.mod`, and CI builds with that version.
+The baseline is kept in git. It consists of the [Dockerfile](../../Dockerfile), the manifests in [k8s/](../../k8s/), the SQL in [migrations/](../../migrations/), and the dependency versions in `go.mod` and `go.sum`. The Go version is fixed at 1.26.10 in `go.mod`, and CI builds with that version. Base images are pinned by digest and Actions by commit SHA, so a given commit always builds from the same inputs.
 
-Gaps: Deployments use the `latest` image tag, so the running version cannot be tied to a commit. Base images are not pinned by digest. Tracked as POAM-16.
+Gap: Deployments use the `latest` image tag, so the running version cannot be tied to a commit. Tracked as POAM-16.
 
 #### CM-3 Configuration Change Control
 
 Status: Partially Implemented
 
-All changes go through git, and CI builds, vets, checks formatting, tests, and scans every push and pull request to `main`. Gaps: Branch protection is not configured, changes have been pushed straight to `main`, and no second person reviews them. Tracked as POAM-18.
+All changes go through git, and CI builds, vets, checks formatting, tests, and scans every push and pull request to `main`. Gaps: Branch protection is not configured, so pull requests and passing checks are not required before merge. Changes have been pushed straight to `main` in the past. This is a one person project, so no second person reviews changes. Tracked as POAM-18.
 
 #### CM-4 Impact Analyses
 
-Status: Planned
+Status: Partially Implemented
 
-Changes are not reviewed for security impact before merge. A pull request template with a security impact section will be added and required for changes to authentication, audit, network, or data handling code. Tracked as POAM-18.
+[.github/pull_request_template.md](../../.github/pull_request_template.md) puts a security impact section in every pull request. The author checks whether the change touches authentication, audit records, PHI handling, network exposure, dependencies, CI, secrets, or the schema, explains each item checked, and confirms whether the SSP and POA&M need updating.
+
+Gap: Nothing stops a merge when the section is left blank, and there is no independent reviewer to check the analysis. Tracked as POAM-18.
 
 #### CM-5 Access Restrictions for Change
 
-Status: Planned
+Status: Partially Implemented
 
-The repository has one owner and no rules about who may merge. The cluster has no documented limits on who may apply manifests. Branch protection, CODEOWNERS, and EKS access entries that limit `kubectl apply` in the namespace to a deploy role will address this. Tracked as POAM-18.
+[.github/CODEOWNERS](../../.github/CODEOWNERS) assigns the system owner to every path and names the security relevant paths separately: the audit middleware, migrations, Kubernetes manifests, Dockerfile, workflows, and security documents.
+
+Gaps: CODEOWNERS only restricts merges once branch protection requires code owner review, and that setting is not on. The cluster has no documented limit on who may apply manifests. Tracked as POAM-18.
 
 #### CM-6 Configuration Settings
 
@@ -597,11 +609,9 @@ Security relevant settings are set in code and manifests and reviewed with the c
 
 #### CM-7 Least Functionality
 
-Status: Partially Implemented
+Status: Implemented
 
-The runtime image has no shell, package manager, or other binaries. The pod exposes one port. The router serves only the routes registered in `main`, and anything else returns 404.
-
-Gaps: The producer can create Kafka topics. The pod mounts a service account token it does not use. Tracked as POAM-13.
+The runtime image has no shell, package manager, or other binaries. The pod exposes one port. The router serves only the routes registered in `main`, and anything else returns 404. The pod does not mount a service account token (`automountServiceAccountToken: false` in [k8s/deployment.yaml](../../k8s/deployment.yaml)). The producer cannot create Kafka topics (`AllowAutoTopicCreation: false`), and the local broker in [docker-compose.yml](../../docker-compose.yml) has topic auto creation turned off to match MSK, where it is off by default.
 
 #### CM-8 System Component Inventory
 
@@ -667,7 +677,7 @@ No formal risk assessment or threat model exists. The gap analysis in this plan 
 
 Status: Partially Implemented
 
-`govulncheck` scans the Go code and its dependencies in CI and reports only vulnerabilities that the code can actually reach. Gaps: Container images and the cluster configuration are not scanned, and scans do not run on a schedule. Tracked as POAM-15.
+`govulncheck` scans the Go code and its dependencies on every push and pull request and again every Monday. It reports only vulnerabilities that the code can actually reach. Gaps: Container images and the cluster configuration are not scanned. Tracked as POAM-15.
 
 #### RA-5(2) Update Vulnerabilities to Be Scanned
 
@@ -677,9 +687,11 @@ Status: Implemented
 
 #### RA-5(11) Public Disclosure Program
 
-Status: Planned
+Status: Partially Implemented
 
-The repository has no `SECURITY.md` and no way to report a vulnerability privately. A security policy will be added, and GitHub private vulnerability reporting will be turned on. Tracked as POAM-23.
+[SECURITY.md](../../SECURITY.md) tells researchers how to report a vulnerability privately and commits to acknowledgment within 3 business days, an initial assessment within 10 business days, and fix targets by severity. It asks reporters never to send real PHI.
+
+Gap: The policy directs reports to GitHub private vulnerability reporting, which must be turned on in the repository settings before the channel works. Tracked as POAM-23.
 
 #### RA-7 Risk Response
 
@@ -699,7 +711,7 @@ Development follows a simple life cycle. Changes are made in git, checked by CI,
 
 Status: Partially Implemented
 
-The [README](../../README.md) covers architecture, setup, the audit log, and deployment. [k8s/README.md](../../k8s/README.md) covers the manifests, including the NetworkPolicy prerequisites. This plan describes the security design. Gaps: There is no API reference and no administrator guide covering secure configuration of the AWS services. Tracked as POAM-24.
+The [README](../../README.md) covers architecture, setup, the audit log, and deployment. [k8s/README.md](../../k8s/README.md) covers the manifests, including the NetworkPolicy prerequisites. [SECURITY.md](../../SECURITY.md) covers vulnerability reporting. This plan describes the security design. Gaps: There is no API reference and no administrator guide covering secure configuration of the AWS services. Tracked as POAM-24.
 
 #### SA-8 Security and Privacy Engineering Principles
 
