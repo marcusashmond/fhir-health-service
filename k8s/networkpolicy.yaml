@@ -1,0 +1,52 @@
+# Restricts the API pods to the traffic they need. Selecting the pods with
+# both policy types denies everything else in and out.
+#
+# On EKS this only takes effect when network policy enforcement is turned on
+# in the Amazon VPC CNI (enableNetworkPolicy: "true") or another policy
+# engine such as Calico is installed.
+#
+# RDS and MSK sit outside the cluster, so egress to them is by CIDR. Replace
+# 10.0.0.0/16 with the CIDR of the subnets that hold the RDS instance and the
+# MSK brokers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fhir-health-service
+spec:
+  podSelector:
+    matchLabels:
+      app: fhir-health-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Pods in the same namespace only. Add a namespaceSelector for the
+    # ingress controller's namespace when one fronts the service.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        # PostgreSQL on RDS
+        - protocol: TCP
+          port: 5432
+        # MSK plaintext listener. Switch to 9094 when client TLS is enabled.
+        - protocol: TCP
+          port: 9092

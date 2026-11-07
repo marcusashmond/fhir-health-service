@@ -14,6 +14,14 @@ spec:
       labels:
         app: fhir-health-service
     spec:
+      securityContext:
+        # 65532 is the nonroot user in the distroless base image. The kubelet
+        # needs a numeric UID to verify runAsNonRoot.
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fhir-health-service
           # Replace with your built/pushed image, e.g. ghcr.io/you/fhir-health-service:v1.0.0
@@ -22,6 +30,11 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           envFrom:
             - secretRef:
                 name: fhir-health-service-secrets

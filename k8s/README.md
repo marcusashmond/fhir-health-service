@@ -2,8 +2,9 @@
 
 Basic manifests for running the API server in a cluster:
 
-- `deployment.yaml` — Deployment with resource requests/limits and readiness/liveness probes against `/health`
+- `deployment.yaml` — Deployment with resource requests/limits and readiness/liveness probes against `/health`. Pods run as UID 65532 with a read only root filesystem, all capabilities dropped, and privilege escalation disabled.
 - `service.yaml` — ClusterIP Service in front of the pods
+- `networkpolicy.yaml`: limits ingress to port 8080 from the same namespace and egress to DNS, PostgreSQL, and Kafka. Set the CIDR in the file to your RDS and MSK subnets. On EKS, enforcement requires network policy support in the VPC CNI or another policy engine.
 - `secret.yaml` — template for `DATABASE_URL` / `KAFKA_BROKER` (placeholder values — see the comment in the file)
 
 ## Postgres and Kafka are not included here
@@ -24,4 +25,5 @@ docker build -t fhir-health-service:latest .
 kubectl apply -f k8s/secret.yaml     # or generate via your secret manager, see comment in the file
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/networkpolicy.yaml
 ```
