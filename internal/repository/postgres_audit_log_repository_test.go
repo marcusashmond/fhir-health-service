@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,6 +10,12 @@ import (
 
 func TestPostgresAuditLogRepository_InsertAndList(t *testing.T) {
 	pool := newTestDB(t)
+	// A non UTC session time zone, as on a developer machine, must not
+	// change the zone of returned timestamps.
+	if _, err := pool.Exec(context.Background(), "ALTER DATABASE fhir SET timezone TO 'America/New_York'"); err != nil {
+		t.Fatalf("failed to set database time zone: %v", err)
+	}
+	pool.Reset()
 	repo := NewPostgresAuditLogRepository(pool)
 
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -36,6 +43,9 @@ func TestPostgresAuditLogRepository_InsertAndList(t *testing.T) {
 		g := got[len(got)-1-i]
 		if g.ID == 0 {
 			t.Errorf("entry %d: ID not assigned", i)
+		}
+		if g.Timestamp.Location() != time.UTC {
+			t.Errorf("entry %d: Timestamp location = %v, want UTC", i, g.Timestamp.Location())
 		}
 		if !g.Timestamp.Equal(want.Timestamp) {
 			t.Errorf("entry %d: Timestamp = %v, want %v", i, g.Timestamp, want.Timestamp)

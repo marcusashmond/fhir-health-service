@@ -45,6 +45,9 @@ func (r *PostgresAuditLogRepository) List(limit, offset int) ([]*models.AuditLog
 		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.Method, &entry.Path, &resourceType, &resourceID, &entry.StatusCode, &sourceIP); err != nil {
 			return nil, err
 		}
+		// Postgres returns timestamptz in the session time zone. Audit
+		// timestamps are always reported in UTC.
+		entry.Timestamp = entry.Timestamp.UTC()
 		if resourceType != nil {
 			entry.ResourceType = *resourceType
 		}
