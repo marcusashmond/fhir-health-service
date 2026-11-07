@@ -3,6 +3,7 @@ package middleware
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ func (a *AuditLogger) Close() {
 }
 
 // Middleware logs every request it wraps: timestamp, method, path, resource
-// ID (if present in the route), and response status code. The record is
+// ID (if present in the route), response status code, and client source IP. The record is
 // written to stdout as JSON and enqueued for async persistence — the queue
 // send is non-blocking, so a full queue or slow DB never delays the response.
 func (a *AuditLogger) Middleware(next http.Handler) http.Handler {
@@ -65,6 +66,7 @@ func (a *AuditLogger) Middleware(next http.Handler) http.Handler {
 			ResourceType: resourceType(r.URL.Path),
 			ResourceID:   chi.URLParam(r, "id"),
 			StatusCode:   rec.status,
+			SourceIP:     sourceIP(r),
 		}
 
 		if line, err := json.Marshal(entry); err != nil {
@@ -79,6 +81,17 @@ func (a *AuditLogger) Middleware(next http.Handler) http.Handler {
 			log.Printf("audit log queue full, dropping record for %s %s", entry.Method, entry.Path)
 		}
 	})
+}
+
+// sourceIP returns the address of the peer that opened the connection.
+// X-Forwarded-For is ignored on purpose: no trusted proxy is configured, so
+// any client could set it to an arbitrary value.
+func sourceIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func resourceType(path string) string {

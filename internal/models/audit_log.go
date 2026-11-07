@@ -10,4 +10,5 @@ type AuditLog struct {
 	ResourceType string    `json:"resourceType,omitempty"`
 	ResourceID   string    `json:"resourceId,omitempty"`
 	StatusCode   int       `json:"statusCode"`
+	SourceIP     string    `json:"sourceIp,omitempty"`
 }

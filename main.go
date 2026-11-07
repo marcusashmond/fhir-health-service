@@ -78,7 +78,7 @@ func main() {
 	auditLogger := middleware.NewAuditLogger(auditLogRepo)
 	defer auditLogger.Close()
 
-	r.Get("/audit-logs", auditLogHandler.List)
+	r.With(auditLogger.Middleware).Get("/audit-logs", auditLogHandler.List)
 
 	r.Route("/Patient", func(r chi.Router) {
 		r.Use(auditLogger.Middleware)

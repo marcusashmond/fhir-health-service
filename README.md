@@ -50,7 +50,7 @@ The Kafka publish happens after the Postgres write succeeds and is best-effort: 
 - Real-time anomaly-detection consumer for out-of-range vital signs — currently covers systolic blood pressure (LOINC `8480-6`, normal range 90–140), structured as a lookup table so more LOINC codes are a one-line addition
 - Graceful shutdown on `SIGINT`/`SIGTERM` — HTTP server and Kafka consumer both drain cleanly
 - Health check endpoint (`GET /health`)
-- HIPAA-aligned audit logging middleware on all `/Patient` and `/Observation` routes — logs timestamp, method, path, resource ID, and status code as JSON to stdout and asynchronously to the `audit_logs` table (a full queue or DB hiccup drops the persisted record rather than blocking the request). Inspectable via `GET /audit-logs?limit=&offset=`
+- HIPAA aligned audit logging middleware on all `/Patient`, `/Observation`, and `/audit-logs` routes. It logs timestamp, method, path, resource ID, status code, and client source IP as JSON to stdout and asynchronously to the `audit_logs` table. A full queue or a database failure drops the persisted record rather than blocking the request. Inspectable via `GET /audit-logs?limit=&offset=`
 
 Not yet implemented: authentication/authorization.
 
@@ -75,6 +75,7 @@ docker compose up -d
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0001_create_patients_table.sql
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0002_create_observations_table.sql
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0003_create_audit_logs_table.sql
+docker compose exec -T postgres psql -U fhir -d fhir < migrations/0004_add_source_ip_to_audit_logs.sql
 
 go run main.go
 ```
@@ -116,13 +117,13 @@ ALERT: abnormal observation for patient Patient/a1b2c3d4e5f6a7b8: value 150 outs
 curl "http://localhost:8080/audit-logs?limit=10"
 ```
 
-Returns the most recent accesses to `/Patient` and `/Observation`, newest first:
+Returns the most recent accesses to `/Patient`, `/Observation`, and `/audit-logs`, newest first:
 
 ```json
 {
   "entries": [
-    {"id": 3, "timestamp": "2026-08-11T18:21:30.335Z", "method": "POST", "path": "/Observation", "resourceType": "Observation", "statusCode": 201},
-    {"id": 2, "timestamp": "2026-08-11T18:21:30.298Z", "method": "GET", "path": "/Patient/a1b2c3d4e5f6a7b8", "resourceType": "Patient", "resourceId": "a1b2c3d4e5f6a7b8", "statusCode": 200}
+    {"id": 3, "timestamp": "2026-08-11T18:21:30.335Z", "method": "POST", "path": "/Observation", "resourceType": "Observation", "statusCode": 201, "sourceIp": "127.0.0.1"},
+    {"id": 2, "timestamp": "2026-08-11T18:21:30.298Z", "method": "GET", "path": "/Patient/a1b2c3d4e5f6a7b8", "resourceType": "Patient", "resourceId": "a1b2c3d4e5f6a7b8", "statusCode": 200, "sourceIp": "127.0.0.1"}
   ],
   "limit": 10,
   "offset": 0
