@@ -87,6 +87,24 @@ func TestCheckAnomaly(t *testing.T) {
 	}
 }
 
+func TestCheckAnomaly_AlertOmitsPHI(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	checkAnomaly(observationWithValue("8480-6", 187))
+
+	out := buf.String()
+	if !strings.Contains(out, "obs1") || !strings.Contains(out, "8480-6") {
+		t.Errorf("alert should name the observation ID and code, got %q", out)
+	}
+	for _, phi := range []string{"Patient/p1", "187"} {
+		if strings.Contains(out, phi) {
+			t.Errorf("alert contains %q, want no patient reference or value: %q", phi, out)
+		}
+	}
+}
+
 func TestObservationCode(t *testing.T) {
 	tests := []struct {
 		name        string

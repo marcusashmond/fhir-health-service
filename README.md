@@ -105,10 +105,10 @@ curl -X POST http://localhost:8080/Observation \
   }'
 ```
 
-The consumer picks this up off `observation.created` and logs:
+The consumer picks this up off `observation.created` and logs the observation ID and code. The patient reference and the value stay out of the log:
 
 ```text
-ALERT: abnormal observation for patient Patient/a1b2c3d4e5f6a7b8: value 150 outside normal range [90, 140] (code 8480-6)
+ALERT: abnormal observation 9f8e7d6c5b4a3921 (code 8480-6)
 ```
 
 ### Example: inspect the audit trail
