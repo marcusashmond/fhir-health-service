@@ -14,6 +14,8 @@ spec:
       labels:
         app: fhir-health-service
     spec:
+      # The app never calls the Kubernetes API, so it gets no token.
+      automountServiceAccountToken: false
       securityContext:
         # 65532 is the nonroot user in the distroless base image. The kubelet
         # needs a numeric UID to verify runAsNonRoot.

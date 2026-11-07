@@ -77,6 +77,9 @@ docker compose exec -T postgres psql -U fhir -d fhir < migrations/0002_create_ob
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0003_create_audit_logs_table.sql
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0004_add_source_ip_to_audit_logs.sql
 
+# create the Kafka topic (the app does not create topics itself)
+docker compose exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic observation.created
+
 go run main.go
 ```
 
