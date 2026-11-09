@@ -2,8 +2,8 @@
 
 This is a sample System Security Plan written for a personal project. The FHIR Health Service has not been assessed or formally authorized, and no authorizing official has reviewed this plan. The system has never processed real patient data.
 
-* Version: 1.1
-* Date: November 7, 2026
+* Version: 1.2
+* Date: November 9, 2026
 * Prepared by: Marcus Ashmond
 * Control baseline: NIST SP 800-53 Revision 5, Moderate baseline as defined in NIST SP 800-53B
 * Companion document: [Plan of Action and Milestones](POAM.md)
@@ -197,7 +197,7 @@ This plan covers the AC, AU, IA, SC, SI, CM, CP, RA, and SA families. Within tho
 | RA-3 | Risk Assessment | Planned |
 | RA-5 | Vulnerability Monitoring and Scanning | Partially Implemented |
 | RA-5(2) | Update Vulnerabilities to Be Scanned | Implemented |
-| RA-5(11) | Public Disclosure Program | Partially Implemented |
+| RA-5(11) | Public Disclosure Program | Implemented |
 | RA-7 | Risk Response | Partially Implemented |
 | SA-3 | System Development Life Cycle | Partially Implemented |
 | SA-5 | System Documentation | Partially Implemented |
@@ -207,7 +207,7 @@ This plan covers the AC, AU, IA, SC, SI, CM, CP, RA, and SA families. Within tho
 | SA-11 | Developer Testing and Evaluation | Partially Implemented |
 | SA-22 | Unsupported System Components | Partially Implemented |
 
-Totals: 5 Implemented, 33 Partially Implemented, 29 Planned, 9 Inherited.
+Totals: 6 Implemented, 32 Partially Implemented, 29 Planned, 9 Inherited.
 
 ### 4.3 Access Control (AC)
 
@@ -511,7 +511,9 @@ Status: Partially Implemented
 
 Two automated mechanisms check for missing updates every week. The scheduled `govulncheck` workflow checks the Go code and modules against the Go vulnerability database. [.github/dependabot.yml](../../.github/dependabot.yml) checks Go modules, GitHub Actions, and the Dockerfile base images, and opens a pull request when a newer version exists.
 
-Gaps: Nothing reports the flaw status of the image actually running in the cluster. Dependabot alerts for known vulnerabilities, as distinct from version updates, are a repository setting that must be turned on. Tracked as POAM-15.
+Dependabot alerts and Dependabot security updates are turned on in the repository settings, so a published advisory against a dependency raises an alert and a fix pull request without waiting for the weekly run.
+
+Gap: Nothing reports the flaw status of the image actually running in the cluster. Tracked as POAM-15.
 
 #### SI-3 Malicious Code Protection
 
@@ -529,9 +531,9 @@ The system is not monitored for attacks or unauthorized use. The anomaly consume
 
 Status: Partially Implemented
 
-Go advisories reach the project automatically through the weekly `govulncheck` run, which reads the Go vulnerability database. Dependabot is configured to raise version updates for Go modules, Actions, and base images.
+Go advisories reach the project automatically through the weekly `govulncheck` run, which reads the Go vulnerability database. Dependabot alerts are turned on in the repository settings, so GitHub security advisories that affect the repository's Go modules and Actions are delivered to the owner as alerts. Dependabot also raises version updates for Go modules, Actions, and base images.
 
-Gaps: Dependabot alerts, which deliver GitHub security advisories for the repository's dependencies, are not yet turned on in the repository settings. No one is subscribed to the PostgreSQL or AWS security bulletins. Tracked as POAM-15.
+Gap: No one is subscribed to the PostgreSQL or AWS security bulletins, so advisories for RDS, MSK, EKS, and the PostgreSQL server are not received. Tracked as POAM-15.
 
 #### SI-7 Software, Firmware, and Information Integrity
 
@@ -583,7 +585,9 @@ Gap: Deployments use the `latest` image tag, so the running version cannot be ti
 
 Status: Partially Implemented
 
-All changes go through git, and CI builds, vets, checks formatting, tests, and scans every push and pull request to `main`. Gaps: Branch protection is not configured, so pull requests and passing checks are not required before merge. Changes have been pushed straight to `main` in the past. This is a one person project, so no second person reviews changes. Tracked as POAM-18.
+All changes go through git. The repository ruleset "main protection" on `main` requires a pull request and a passing `test` check before merge, requires signed commits, and blocks force pushes and branch deletion. Its bypass list is empty, so the owner follows the same rules as anyone else. CI builds, vets, checks formatting, tests, and scans every pull request.
+
+Gap: Required approvals is set to 0. One person maintains the project, and GitHub does not let an author approve their own pull request, so no one independent reviews a change before it merges. Tracked as POAM-18.
 
 #### CM-4 Impact Analyses
 
@@ -597,9 +601,9 @@ Gap: Nothing stops a merge when the section is left blank, and there is no indep
 
 Status: Partially Implemented
 
-[.github/CODEOWNERS](../../.github/CODEOWNERS) assigns the system owner to every path and names the security relevant paths separately: the audit middleware, migrations, Kubernetes manifests, Dockerfile, workflows, and security documents.
+The "main protection" ruleset limits how changes reach `main`. Direct pushes, force pushes, and deletion are blocked, every change arrives through a pull request with a passing `test` check, and every commit must be signed. The bypass list is empty. [.github/CODEOWNERS](../../.github/CODEOWNERS) assigns the system owner to every path and names the security relevant paths separately: the audit middleware, migrations, Kubernetes manifests, Dockerfile, workflows, and security documents.
 
-Gaps: CODEOWNERS only restricts merges once branch protection requires code owner review, and that setting is not on. The cluster has no documented limit on who may apply manifests. Tracked as POAM-18.
+Gaps: Code owner review is off because the only code owner is also the only author, so CODEOWNERS documents ownership but does not gate merges. The owner is a repository administrator and can edit or turn off the ruleset. The cluster has no documented limit on who may apply manifests. Tracked as POAM-18.
 
 #### CM-6 Configuration Settings
 
@@ -687,11 +691,9 @@ Status: Implemented
 
 #### RA-5(11) Public Disclosure Program
 
-Status: Partially Implemented
+Status: Implemented
 
-[SECURITY.md](../../SECURITY.md) tells researchers how to report a vulnerability privately and commits to acknowledgment within 3 business days, an initial assessment within 10 business days, and fix targets by severity. It asks reporters never to send real PHI.
-
-Gap: The policy directs reports to GitHub private vulnerability reporting, which must be turned on in the repository settings before the channel works. Tracked as POAM-23.
+[SECURITY.md](../../SECURITY.md) tells researchers how to report a vulnerability privately and commits to acknowledgment within 3 business days, an initial assessment within 10 business days, and fix targets by severity. It asks reporters never to send real PHI. GitHub private vulnerability reporting is turned on, so the "Report a vulnerability" channel the policy points to is live, and reports stay private between the reporter and the owner until an advisory is published.
 
 #### RA-7 Risk Response
 
@@ -729,7 +731,9 @@ The system depends on AWS for EKS, RDS, MSK, and KMS. All four are HIPAA eligibl
 
 Status: Partially Implemented
 
-All source, manifests, and migrations are under git version control, and `go.sum` locks dependency content. Gaps: Commits are not signed, and there is no branch protection. Tracked as POAM-18.
+All source, manifests, and migrations are under git version control, and `go.sum` locks dependency content. The "main protection" ruleset requires signed commits on `main`, and commits are signed with the owner's SSH key. Changes reach `main` only through pull requests that pass CI (see CM-3). Commits made before the ruleset was added in November 2026 are not signed.
+
+Gap: No one other than the author approves a change before it merges. Tracked as POAM-18.
 
 #### SA-11 Developer Testing and Evaluation
 
