@@ -1,0 +1,11 @@
+# Every change needs review from the system owner. The security relevant
+# paths are listed separately so they keep an owner if the default changes.
+*                                @marcusashmond
+
+/internal/middleware/            @marcusashmond
+/migrations/                     @marcusashmond
+/k8s/                            @marcusashmond
+/Dockerfile                      @marcusashmond
+/.github/                        @marcusashmond
+/docs/security/                  @marcusashmond
+/SECURITY.md                     @marcusashmond

@@ -18,10 +18,12 @@ type Producer struct {
 func NewProducer(broker string) *Producer {
 	return &Producer{
 		writer: &kafkago.Writer{
-			Addr:                   kafkago.TCP(broker),
-			Topic:                  ObservationCreatedTopic,
-			Balancer:               &kafkago.LeastBytes{},
-			AllowAutoTopicCreation: true,
+			Addr:     kafkago.TCP(broker),
+			Topic:    ObservationCreatedTopic,
+			Balancer: &kafkago.LeastBytes{},
+			// Topics are created ahead of time so their retention and
+			// replication settings are deliberate, not broker defaults.
+			AllowAutoTopicCreation: false,
 		},
 	}
 }

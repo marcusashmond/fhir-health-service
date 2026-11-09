@@ -22,6 +22,10 @@ import (
 	"github.com/marcusashmond/fhir-health-service/internal/repository"
 )
 
+// maxRequestBodyBytes caps the size of any request body. FHIR Patient and
+// Observation resources accepted by this API are a few KB at most.
+const maxRequestBodyBytes = 1 << 20
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -74,7 +78,7 @@ func main() {
 	auditLogger := middleware.NewAuditLogger(auditLogRepo)
 	defer auditLogger.Close()
 
-	r.Get("/audit-logs", auditLogHandler.List)
+	r.With(auditLogger.Middleware).Get("/audit-logs", auditLogHandler.List)
 
 	r.Route("/Patient", func(r chi.Router) {
 		r.Use(auditLogger.Middleware)
@@ -94,7 +98,13 @@ func main() {
 		r.Delete("/{id}", observationHandler.Delete)
 	})
 
-	srv := &http.Server{Addr: ":8080", Handler: r}
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      http.MaxBytesHandler(r, maxRequestBodyBytes),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
 	go func() {
 		log.Println("starting server on :8080")

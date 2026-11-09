@@ -70,10 +70,11 @@ func checkAnomaly(observation *models.Observation) {
 		return
 	}
 
+	// The alert goes to stdout, which is not a PHI store, so it carries only
+	// the observation ID and code. Responders look up the rest through the API.
 	value := observation.ValueQuantity.Value
 	if value < r.min || value > r.max {
-		log.Printf("ALERT: abnormal observation for patient %s: value %v outside normal range [%v, %v] (code %s)",
-			observation.Subject.Reference, value, r.min, r.max, code)
+		log.Printf("ALERT: abnormal observation %s (code %s)", observation.ID, code)
 	}
 }
 

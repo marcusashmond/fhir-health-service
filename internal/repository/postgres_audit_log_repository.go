@@ -18,15 +18,15 @@ func NewPostgresAuditLogRepository(db *pgxpool.Pool) *PostgresAuditLogRepository
 
 func (r *PostgresAuditLogRepository) Insert(entry *models.AuditLog) error {
 	_, err := r.db.Exec(context.Background(), `
-		INSERT INTO audit_logs (timestamp, method, path, resource_type, resource_id, status_code)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, entry.Timestamp, entry.Method, entry.Path, entry.ResourceType, entry.ResourceID, entry.StatusCode)
+		INSERT INTO audit_logs (timestamp, method, path, resource_type, resource_id, status_code, source_ip)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, entry.Timestamp, entry.Method, entry.Path, entry.ResourceType, entry.ResourceID, entry.StatusCode, entry.SourceIP)
 	return err
 }
 
 func (r *PostgresAuditLogRepository) List(limit, offset int) ([]*models.AuditLog, error) {
 	rows, err := r.db.Query(context.Background(), `
-		SELECT id, timestamp, method, path, resource_type, resource_id, status_code
+		SELECT id, timestamp, method, path, resource_type, resource_id, status_code, source_ip
 		FROM audit_logs
 		ORDER BY id DESC
 		LIMIT $1 OFFSET $2
@@ -39,17 +39,23 @@ func (r *PostgresAuditLogRepository) List(limit, offset int) ([]*models.AuditLog
 	entries := make([]*models.AuditLog, 0)
 	for rows.Next() {
 		var (
-			entry                    models.AuditLog
-			resourceType, resourceID *string
+			entry                              models.AuditLog
+			resourceType, resourceID, sourceIP *string
 		)
-		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.Method, &entry.Path, &resourceType, &resourceID, &entry.StatusCode); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.Method, &entry.Path, &resourceType, &resourceID, &entry.StatusCode, &sourceIP); err != nil {
 			return nil, err
 		}
+		// Postgres returns timestamptz in the session time zone. Audit
+		// timestamps are always reported in UTC.
+		entry.Timestamp = entry.Timestamp.UTC()
 		if resourceType != nil {
 			entry.ResourceType = *resourceType
 		}
 		if resourceID != nil {
 			entry.ResourceID = *resourceID
+		}
+		if sourceIP != nil {
+			entry.SourceIP = *sourceIP
 		}
 		entries = append(entries, &entry)
 	}

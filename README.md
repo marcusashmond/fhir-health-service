@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/marcusashmond/fhir-health-service/actions/workflows/ci.yml/badge.svg)](https://github.com/marcusashmond/fhir-health-service/actions/workflows/ci.yml)
 
-A FHIR-compliant health data interoperability service in Go, with Kafka-based event streaming and real-time anomaly detection.
+A FHIR compliant health data interoperability service in Go, with event streaming over Kafka and anomaly detection on incoming vital signs.
 
 ## Overview
 
-This is a backend service that ingests and serves patient health data modeled on the FHIR standard (`Patient` and `Observation` resources), backed by PostgreSQL. Every created `Observation` is published to Kafka, where a consumer checks it against known-normal ranges for its LOINC code and logs an alert if the value is out of range — giving the system a real-time path for flagging abnormal vitals as they're recorded, separate from the request/response path.
+This is a backend service that ingests and serves patient health data modeled on the FHIR standard (`Patient` and `Observation` resources), backed by PostgreSQL. Every created `Observation` is published to Kafka, where a consumer checks it against the normal range for its LOINC code and logs an alert if the value is out of range. This gives the system a way to flag abnormal vitals as they are recorded, separate from the request and response path.
 
 ## Architecture
 
@@ -30,27 +30,27 @@ flowchart LR
     Check -->|no| NoOp[no action]
 ```
 
-The Kafka publish happens after the Postgres write succeeds and is best-effort: if it fails, the error is logged but the HTTP request still returns success, since the write of record already landed in Postgres.
+The Kafka publish happens after the Postgres write succeeds and is best effort. If it fails, the error is logged but the HTTP request still returns success, since the write of record already landed in Postgres.
 
 ## Tech Stack
 
-- **Go** (1.26)
-- **[chi](https://github.com/go-chi/chi)** — HTTP router
-- **PostgreSQL** — persistence, via [pgx](https://github.com/jackc/pgx)
-- **Kafka** ([kafka-go](https://github.com/segmentio/kafka-go)) — event streaming, KRaft mode (no Zookeeper)
-- **Docker Compose** — local Postgres + Kafka
-- **[godotenv](https://github.com/joho/godotenv)** — `.env` file loading
+- Go 1.26
+- [chi](https://github.com/go-chi/chi): HTTP router
+- PostgreSQL: persistence, through [pgx](https://github.com/jackc/pgx)
+- Kafka ([kafka-go](https://github.com/segmentio/kafka-go)): event streaming in KRaft mode, with no ZooKeeper
+- Docker Compose: local Postgres and Kafka
+- [godotenv](https://github.com/joho/godotenv): `.env` file loading
 
 ## Features
 
 - Patient CRUD (`Create`, `Read`, `Update`, `Delete`, `List`)
-- Observation CRUD with patient linkage — `subject.reference` is validated against existing patients at write time (returns `400` if the referenced patient doesn't exist)
+- Observation CRUD with patient linkage. `subject.reference` is checked against existing patients at write time, and the API returns `400` if the referenced patient doesn't exist.
 - List observations by patient (`GET /Patient/{id}/Observation`)
 - Kafka event publishing on Observation creation (`observation.created` topic)
-- Real-time anomaly-detection consumer for out-of-range vital signs — currently covers systolic blood pressure (LOINC `8480-6`, normal range 90–140), structured as a lookup table so more LOINC codes are a one-line addition
-- Graceful shutdown on `SIGINT`/`SIGTERM` — HTTP server and Kafka consumer both drain cleanly
+- Anomaly detection consumer that flags vital signs outside their normal range. It currently covers systolic blood pressure (LOINC `8480-6`, normal range 90 to 140 mmHg). Ranges live in a lookup table, so adding a LOINC code takes one line.
+- Graceful shutdown on `SIGINT` and `SIGTERM`. The HTTP server, the Kafka consumer, and the audit queue all drain before exit.
 - Health check endpoint (`GET /health`)
-- HIPAA-aligned audit logging middleware on all `/Patient` and `/Observation` routes — logs timestamp, method, path, resource ID, and status code as JSON to stdout and asynchronously to the `audit_logs` table (a full queue or DB hiccup drops the persisted record rather than blocking the request). Inspectable via `GET /audit-logs?limit=&offset=`
+- HIPAA aligned audit logging middleware on all `/Patient`, `/Observation`, and `/audit-logs` routes. It logs timestamp, method, path, resource ID, status code, and client source IP as JSON to stdout and asynchronously to the `audit_logs` table. A full queue or a database failure drops the persisted record rather than blocking the request. Inspectable via `GET /audit-logs?limit=&offset=`
 
 Not yet implemented: authentication/authorization.
 
@@ -71,10 +71,14 @@ cp .env.example .env
 
 docker compose up -d
 
-# apply migrations (no migration runner yet — applied directly via psql)
+# apply migrations (no migration runner yet, so apply them with psql)
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0001_create_patients_table.sql
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0002_create_observations_table.sql
 docker compose exec -T postgres psql -U fhir -d fhir < migrations/0003_create_audit_logs_table.sql
+docker compose exec -T postgres psql -U fhir -d fhir < migrations/0004_add_source_ip_to_audit_logs.sql
+
+# create the Kafka topic (the app does not create topics itself)
+docker compose exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic observation.created
 
 go run main.go
 ```
@@ -89,7 +93,7 @@ curl -X POST http://localhost:8080/Patient \
   -d '{"name":[{"family":"Doe","given":["Jane"]}],"gender":"female","birthDate":"1990-01-01"}'
 ```
 
-Response includes a server-generated `id`, e.g. `"id":"a1b2c3d4e5f6a7b8"`.
+The response includes an `id` assigned by the server, e.g. `"id":"a1b2c3d4e5f6a7b8"`.
 
 ### Example: create an observation (triggers an anomaly alert)
 
@@ -104,10 +108,10 @@ curl -X POST http://localhost:8080/Observation \
   }'
 ```
 
-The consumer picks this up off `observation.created` and logs:
+The consumer picks this up off `observation.created` and logs the observation ID and code. The patient reference and the value stay out of the log:
 
 ```text
-ALERT: abnormal observation for patient Patient/a1b2c3d4e5f6a7b8: value 150 outside normal range [90, 140] (code 8480-6)
+ALERT: abnormal observation 9f8e7d6c5b4a3921 (code 8480-6)
 ```
 
 ### Example: inspect the audit trail
@@ -116,13 +120,13 @@ ALERT: abnormal observation for patient Patient/a1b2c3d4e5f6a7b8: value 150 outs
 curl "http://localhost:8080/audit-logs?limit=10"
 ```
 
-Returns the most recent accesses to `/Patient` and `/Observation`, newest first:
+Returns the most recent accesses to `/Patient`, `/Observation`, and `/audit-logs`, newest first:
 
 ```json
 {
   "entries": [
-    {"id": 3, "timestamp": "2026-08-11T18:21:30.335Z", "method": "POST", "path": "/Observation", "resourceType": "Observation", "statusCode": 201},
-    {"id": 2, "timestamp": "2026-08-11T18:21:30.298Z", "method": "GET", "path": "/Patient/a1b2c3d4e5f6a7b8", "resourceType": "Patient", "resourceId": "a1b2c3d4e5f6a7b8", "statusCode": 200}
+    {"id": 3, "timestamp": "2026-08-11T18:21:30.335Z", "method": "POST", "path": "/Observation", "resourceType": "Observation", "statusCode": 201, "sourceIp": "127.0.0.1"},
+    {"id": 2, "timestamp": "2026-08-11T18:21:30.298Z", "method": "GET", "path": "/Patient/a1b2c3d4e5f6a7b8", "resourceType": "Patient", "resourceId": "a1b2c3d4e5f6a7b8", "statusCode": 200, "sourceIp": "127.0.0.1"}
   ],
   "limit": 10,
   "offset": 0
@@ -133,19 +137,20 @@ Returns the most recent accesses to `/Patient` and `/Observation`, newest first:
 
 ```text
 internal/
-  handlers/    HTTP handlers (chi) for Patient, Observation, and audit-log endpoints
-  models/      FHIR resource structs — Patient, Observation, and supporting types (HumanName, Address, CodeableConcept, ...)
-  repository/  Postgres-backed persistence behind PatientRepository / ObservationRepository / AuditLogRepository interfaces
+  handlers/    HTTP handlers (chi) for Patient, Observation, and audit log endpoints
+  models/      FHIR resource structs: Patient, Observation, and supporting types (HumanName, Address, CodeableConcept, ...)
+  repository/  Postgres persistence behind PatientRepository / ObservationRepository / AuditLogRepository interfaces
   kafka/       Kafka producer (publishes observation.created) and consumer (anomaly detection)
-  middleware/  Audit-logging middleware for Patient/Observation routes
+  middleware/  Audit logging middleware for the Patient, Observation, and audit log routes
 migrations/    Raw SQL migration files, applied manually against Postgres
-k8s/           Kubernetes manifests (Deployment, Service, Secret) for deploying the app — see k8s/README.md
-Dockerfile     Multi-stage build producing a minimal distroless runtime image
+k8s/           Kubernetes manifests (Deployment, Service, NetworkPolicy, Secret). See k8s/README.md
+docs/security/ System Security Plan and POA&M
+Dockerfile     Multistage build producing a minimal distroless runtime image
 ```
 
 ## Deployment
 
-The app has a multi-stage `Dockerfile` (Go build stage → `distroless/static` runtime, no shell, non-root) and basic Kubernetes manifests under [`k8s/`](k8s/README.md).
+The app has a multistage `Dockerfile` that compiles in a Go build stage and runs on a `distroless/static` image with no shell, as an unprivileged user. Both base images are pinned by digest. Kubernetes manifests are under [`k8s/`](k8s/README.md).
 
 ```bash
 docker build -t fhir-health-service:latest .
@@ -155,7 +160,13 @@ docker run -p 8080:8080 \
   fhir-health-service:latest
 ```
 
-`host.docker.internal` lets a standalone container reach the Postgres/Kafka started by `docker compose` on the host — useful for testing the image locally. In Kubernetes, `DATABASE_URL`/`KAFKA_BROKER` are supplied via `k8s/secret.yaml` and should point at managed or in-cluster instances (RDS/MSK, or a Postgres/Kafka Helm chart) rather than `docker-compose.yml`'s containers, which are dev-only. See [`k8s/README.md`](k8s/README.md) for details.
+`host.docker.internal` lets a standalone container reach the Postgres and Kafka started by `docker compose` on the host, which is useful for testing the image locally. In Kubernetes, `DATABASE_URL` and `KAFKA_BROKER` come from `k8s/secret.yaml` and should point at managed services such as RDS and MSK, or at instances run in the cluster by a Helm chart. The containers in `docker-compose.yml` are for local development only. See [`k8s/README.md`](k8s/README.md) for details.
+
+## Security
+
+* [docs/security/SSP.md](docs/security/SSP.md): System Security Plan against the NIST SP 800-53 Revision 5 Moderate baseline
+* [docs/security/POAM.md](docs/security/POAM.md): Plan of Action and Milestones for open weaknesses
+* [SECURITY.md](SECURITY.md): how to report a vulnerability
 
 ## Roadmap
 
@@ -164,4 +175,4 @@ Not committed to, but the natural next steps given the current structure:
 - Additional LOINC code ranges in the anomaly consumer (heart rate, temperature, etc.)
 - A migration runner instead of applying SQL files by hand
 - Authentication/authorization
-- In-cluster or managed Postgres/Kafka for the Kubernetes deployment (currently BYO per `k8s/README.md`)
+- Managed or operator run Postgres and Kafka for the Kubernetes deployment (today you bring your own, as described in `k8s/README.md`)
